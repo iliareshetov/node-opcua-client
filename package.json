@@ -13,7 +13,7 @@
   "private": true,
   "dependencies": {
     "dotenv": "10.0.0",
-    "node-opcua": "2.44.0",
+    "node-opcua": "2.74.0",
     "pg": "8.6.0"
   },
   "devDependencies": {
