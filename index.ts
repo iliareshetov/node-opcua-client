@@ -1,13 +1,19 @@
-const {
+import {
   OPCUAClient,
   AttributeIds,
   TimestampsToReturn,
   ClientMonitoredItem,
-} = require("node-opcua");
-const os = require("os");
-const pool = require("./db");
+  ClientSession,
+  BrowseResult,
+  UAString,
+  ClientSubscription,
+  DataValue,
+} from "node-opcua";
+import os from "os";
+import { pool, saveTag } from "./db";
+import { ItemToMonitor, Parameters } from "./types";
 
-const client = OPCUAClient.create({ endpointMustExist: false });
+const client: OPCUAClient = OPCUAClient.create({ endpointMustExist: false });
 /*
 - Root (i=84)
     - Objects (i=85)
@@ -15,34 +21,45 @@ const client = OPCUAClient.create({ endpointMustExist: false });
     - Views (i=87)
 */
 // const nodeId = "ns=0;i=85"; // RootFolder.Objects.
-const nodeId = "ns=1;i=1000"; // RootFolder.Objects
+const nodeId: string = "ns=1;i=1000"; // RootFolder.Objects
 
-const hostname = os.hostname().toLowerCase();
-const endpointUrl = "opc.tcp://" + hostname + ":26543";
+const hostname: string = os.hostname().toLowerCase();
+const endpointUrl: string = "opc.tcp://" + hostname + ":26543";
 
 async function main() {
   try {
     // step 1 : connect to
     await client.connect(endpointUrl);
-    console.log("connected");
+    console.log(`INFO: Connected, endpointUrl: ${endpointUrl}`);
 
     // step 2 : createSession
+    const session: ClientSession = await client.createSession();
+    console.log("INFO: session created");
 
-    const session = await client.createSession();
-    console.log("session created");
-
-    let browseResult = await session.browse({
+    const browseResult: BrowseResult = await session.browse({
       nodeId,
       //   nodeClassMask: NodeClass.Variable, // we only want sub node that are Variables
       resultMask: 63, // extract all information possible
     });
-    console.log("BrowseResult = ", browseResult.toString());
-    const tagName = browseResult.references[1].browseName.name;
-    const nodeIdName = browseResult.references[1].nodeId.toString();
-    console.log("name = ", tagName);
-    console.log("nodeId = ", nodeIdName);
 
-    const subscription = await session.createSubscription2({
+    console.log("INFO: BrowseResult = ", browseResult.toString());
+
+    let tagName: UAString;
+    let nodeIdName: string;
+
+    if (browseResult.references !== null) {
+      for (const reference of browseResult.references) {
+        console.log(reference);
+        if (reference.nodeId.toString() === "ns=1;i=1001") {
+          tagName = reference.browseName.name;
+          nodeIdName = reference.nodeId.toString();
+          console.log("INFO: selected to monitor tagName: ", tagName);
+          console.log("INFO: selected to monitor nodeId: ", nodeIdName);
+        }
+      }
+    }
+
+    const subscription: ClientSubscription = await session.createSubscription2({
       requestedPublishingInterval: 2000,
       requestedMaxKeepAliveCount: 20,
       requestedLifetimeCount: 6000,
@@ -55,31 +72,31 @@ async function main() {
       .on("keepalive", () => console.log("keepalive"))
       .on("terminated", () => console.log("subscription terminated"));
 
-    const itemToMonitor = {
+    const itemToMonitor: ItemToMonitor = {
       nodeId: "ns=1;i=1001",
       attributeId: AttributeIds.Value,
     };
 
-    const parameters = {
+    const parameters: Parameters = {
       samplingInterval: 5000,
       discardOldest: true,
       queueSize: 10,
     };
 
-    const monitoredItem = ClientMonitoredItem.create(
+    const monitoredItem: ClientMonitoredItem = ClientMonitoredItem.create(
       subscription,
       itemToMonitor,
       parameters,
       TimestampsToReturn.Both
     );
 
-    monitoredItem.on("changed", (dataValue) => {
+    monitoredItem.on("changed", (dataValue: DataValue) => {
       console.log();
       console.log("***** ***** ***** START ***** ***** *****");
       console.log(
         `Reading value: ${dataValue.value.value}, time: ${dataValue.sourceTimestamp}`
       );
-      // console.log(dataValue);
+      console.log(dataValue);
 
       save(nodeIdName, tagName, dataValue.value.value);
     });
@@ -100,9 +117,9 @@ async function initDb() {
   }
 }
 
-async function save(nodeId, name, value) {
+async function save(nodeId: string, name: UAString, value: string) {
   try {
-    const res = await pool.save(nodeId, name, value);
+    const res: string = await saveTag(nodeId, name, value);
 
     console.log(res ? res : "Something went wrong");
     console.log("***** ***** ***** END ***** ***** *****");
